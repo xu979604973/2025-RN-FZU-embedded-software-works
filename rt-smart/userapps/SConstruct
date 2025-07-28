@@ -1,0 +1,166 @@
+import sys
+import os
+import shutil  
+
+# add building.py path
+sys.path = sys.path + [os.path.join('../', 'tools')]
+from building import *
+# 当前工作目录
+cwd = GetCurrentDir()
+app_list = os.listdir(os.path.join(cwd, 'apps'))
+sdk_path= os.path.join(cwd, 'sdk')
+
+# 定义库分类：用于支持分组构建或清理
+LIBRARY_GROUPS = {
+    'all': ['lib', 'lib_base', 'lib_device', 'lib_public'],
+    'lib': ['lib'],
+    'lib_base': ['lib_base'],
+    'lib_device': ['lib_device'],
+    'lib_public': ['lib_public'],
+}
+
+def get_library_paths(lib_groups):
+    """获取指定库分组的完整路径列表"""
+    cwd = GetCurrentDir()
+    paths = []
+    for group in lib_groups:
+        lib_dir = os.path.join(cwd, 'libraries', group)
+        if os.path.exists(lib_dir):
+            paths.append(lib_dir)
+    return paths
+
+
+def build_libraries(lib_groups):
+    """构建指定分组下所有有效的库"""
+    lib_dirs = get_library_paths(lib_groups)
+    for lib_dir in lib_dirs:
+        for item in os.listdir(lib_dir):
+            lib_path = os.path.join(lib_dir, item)
+            if os.path.isdir(lib_path) and os.path.isfile(os.path.join(lib_path, 'SConscript')):
+                BuildLibrary(item, os.path.join(lib_path, 'SConscript'), usr_root='.')
+
+
+def clean_libraries(lib_name):
+    """清理指定库（支持单个库、库组或'all'全部清理），同时清理对应SDK目录
+    Args:
+        lib_name: 库名称、组名或'all'表示全部
+    """
+    # 获取所有已知库路径用于单个库检查
+    all_lib_dirs = [os.path.join(cwd, 'libraries', group)  for group in LIBRARY_GROUPS['all']]
+    # 判断是否是预定义的组名
+    if lib_name.lower() == 'all':
+        lib_groups = LIBRARY_GROUPS['all']
+    elif lib_name in LIBRARY_GROUPS:
+        lib_groups = LIBRARY_GROUPS[lib_name]
+    else:
+        # 不是预定义组名，尝试作为单个库处理
+        lib_groups = []
+        # 检查是否是已知的单个库
+        lib_found = False
+        for lib_dir in all_lib_dirs:
+            lib_path = os.path.join(lib_dir, lib_name)
+            if os.path.isdir(lib_path) and os.path.isfile(os.path.join(lib_path, 'SConscript')):
+                # 清理库
+                clean_library(lib_name)
+                # 清理SDK目录
+                sdk_lib_path = os.path.join(sdk_path, lib_name)
+                if os.path.exists(sdk_lib_path):
+                    print(f"Deleting SDK directory: {sdk_lib_path}")
+                    shutil.rmtree(sdk_lib_path)
+                lib_found = True
+                break
+        
+        if not lib_found:
+            # 既不是组名也不是有效库名
+            valid_options = list(LIBRARY_GROUPS.keys())
+            print(f"Warning: Unknown library or group '{lib_name}'. Valid options are: {', '.join(valid_options)}")
+        return
+    
+    # 处理库组清理
+    print(f"Deleting libraries in groups: {lib_groups}")
+    lib_dirs = get_library_paths(lib_groups)
+    for lib_dir in lib_dirs:
+        for item in os.listdir(lib_dir):
+            lib_path = os.path.join(lib_dir, item)
+            if os.path.isdir(lib_path) and os.path.isfile(os.path.join(lib_path, 'SConscript')):
+                # 清理库
+                clean_library(item)
+                # 清理SDK目录
+                sdk_lib_path = os.path.join(sdk_path, item)
+                if os.path.exists(sdk_lib_path):
+                    print(f"Deleting SDK directory: {item}")
+                    shutil.rmtree(sdk_lib_path)
+
+
+def build_application(app_name):
+    """构建指定的应用"""
+    cwd = GetCurrentDir()
+    path = os.path.join(cwd, 'apps', app_name)
+    if os.path.isfile(os.path.join(path, 'SConscript')):
+        BuildApplication(app_name, os.path.join(path, 'SConscript'), usr_root='.')
+
+
+def build_all_applications():
+    """构建所有 apps 目录下的应用"""
+    cwd = GetCurrentDir()
+    for item in os.listdir(os.path.join(cwd, 'apps')):
+        path = os.path.join(cwd, 'apps', item)
+        if os.path.isfile(os.path.join(path, 'SConscript')):
+            BuildApplication(item, os.path.join(path, 'SConscript'), usr_root='.')
+
+import os
+import shutil
+import time
+from multiprocessing.dummy import Pool as ThreadPool  # 兼容的线程池实现
+
+def copy_file(args):
+    """单个文件复制任务"""
+    src_path, dest_path = args
+    shutil.copy2(src_path, dest_path)
+    return dest_path
+
+
+ 
+
+# 添加命令选项
+AddOption('--app', dest='make-application', type='string', default=None, help='make application')
+AddOption('--lib', dest='make-library', type='string', default=None, help='make static library')
+AddOption('--cleanlib', dest='clean-library', type='string', default=None, help='clean static library build directory')
+
+# 优先处理清理库操作
+if GetOption('clean-library'):
+    clean_libraries(GetOption('clean-library'))
+    Exit(0)
+
+app_target = None
+lib_target = None
+
+if GetOption('make-application'):
+    app_target = GetOption('make-application')
+
+if GetOption('make-library'):
+    lib_target = GetOption('make-library')
+
+# 构建库逻辑
+if lib_target:
+    if lib_target in LIBRARY_GROUPS:
+        build_libraries(LIBRARY_GROUPS[lib_target])
+    else:
+        # 尝试查找并构建单个库
+        found = False
+        for lib_dir in get_library_paths(LIBRARY_GROUPS['all']):
+            lib_path = os.path.join(lib_dir, lib_target)
+            if os.path.isfile(os.path.join(lib_path, 'SConscript')):
+                BuildLibrary(lib_target, os.path.join(lib_path, 'SConscript'), usr_root='.')
+                found = True
+                break
+        if not found:
+            print(f"Error: Library or library group '{lib_target}' not found")
+            Exit(1)
+            
+# 构建应用逻辑
+elif app_target:
+    build_application(app_target)
+# 默认构建所有应用
+else:
+    build_all_applications()
