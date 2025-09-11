@@ -12,12 +12,9 @@
 *.old
 build
 *~
-*.o
 *.obj
 *.bak
 *.dep
-*.lib
-*.a
 *.i
 *.d
 GPUCache
